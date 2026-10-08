@@ -783,7 +783,11 @@ trap - EXIT HUP INT TERM
 
     var shown = root.maxIcons > 0 ? Math.min(tops.length, root.maxIcons) : tops.length
     var entries = []
-    for (var i = 0; i < shown; i++) entries.push(root.iconEntryFor(tops[i]))
+    for (var i = 0; i < shown; i++) {
+      // Carry the window's address so a click on its logo can focus it.
+      entries.push(Object.assign({}, root.iconEntryFor(tops[i]),
+        { address: String(tops[i].address || "") }))
+    }
     if (tops.length > shown) entries.push({ glyph: "+" + (tops.length - shown), source: "" })
     return entries
   }
@@ -806,6 +810,28 @@ trap - EXIT HUP INT TERM
     root.bar.run("hyprctl dispatch " + Util.shellQuote('hl.dsp.focus({ workspace = "' + id + '" })'))
   }
 
+  // Focus the exact window behind a clicked logo. The bar can lag a window
+  // that just moved (e.g. minimized to special:minimized by omamin), so the
+  // window is looked up live and must still be on the clicked workspace;
+  // anything else falls back to the plain workspace click.
+  function focusWindow(address, workspaceId) {
+    var addr = String(address || "").replace(/^0x/i, "")
+    var values = Hyprland.toplevels ? Hyprland.toplevels.values : []
+    var target = null
+    for (var i = 0; i < values.length; i++) {
+      if (values[i] && String(values[i].address || "").replace(/^0x/i, "") === addr) {
+        target = values[i]
+        break
+      }
+    }
+    if (!root.bar || !/^[0-9a-f]+$/i.test(addr) || !target || !target.workspace
+        || target.workspace.id !== workspaceId) {
+      root.focusWorkspace(workspaceId)
+      return
+    }
+    root.bar.run("hyprctl dispatch " + Util.shellQuote('hl.dsp.focus({ window = "address:0x' + addr + '" })'))
+  }
+
   // --- layout --------------------------------------------------------------
   implicitWidth: root.vertical ? root.barSize : strip.implicitWidth + root.trailingGap
   implicitHeight: strip.implicitHeight
@@ -820,6 +846,7 @@ trap - EXIT HUP INT TERM
     id: windowIcon
     required property var modelData
     property color tint: root.fgColor
+    readonly property string windowAddress: String(windowIcon.modelData.address || "")
 
     readonly property string imageSource: String(windowIcon.modelData.source || "")
     readonly property string glyphText: String(windowIcon.modelData.glyph || "")
@@ -949,7 +976,12 @@ trap - EXIT HUP INT TERM
             cursorShape: Qt.PointingHandCursor
             onEntered: pill.hovered = true
             onExited: pill.hovered = false
-            onClicked: root.focusWorkspace(pill.workspaceId)
+            onClicked: function(mouse) {
+              var point = content.mapFromItem(this, mouse.x, mouse.y)
+              var icon = content.childAt(point.x, point.y)
+              if (icon && icon.windowAddress) root.focusWindow(icon.windowAddress, pill.workspaceId)
+              else root.focusWorkspace(pill.workspaceId)
+            }
           }
         }
       }
